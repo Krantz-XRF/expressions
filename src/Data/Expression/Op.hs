@@ -10,5 +10,5 @@ makeOp "RingOpDiff"  [("Multiply", '(*))]
 makeOp "FieldOpDiff" [("Recip", 'recip), ("Divide", '(/))]
 
 type GroupOp = GenOp '[MonoidOp, GroupOpDiff]
-type RingOp = GenOp '[MonoidOp, GroupOpDiff, RingOpDiff]
+type RingOp  = GenOp '[MonoidOp, GroupOpDiff, RingOpDiff]
 type FieldOp = GenOp '[MonoidOp, GroupOpDiff, RingOpDiff, FieldOpDiff]
