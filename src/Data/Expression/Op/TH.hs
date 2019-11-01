@@ -2,6 +2,7 @@
 module Data.Expression.Op.TH (makeOp) where
 
 import Data.Char
+import qualified Data.Set as Set
 import Control.Monad
 
 import Language.Haskell.TH
@@ -72,12 +73,10 @@ makeExprSynonym ops = forM ops $ \(nm, cnt) -> do
     return $ PatSynD exprConName (PrefixPatSyn vars) ImplBidir
         (ConP 'Op [ConP opSynName (VarP <$> vars)])
 
-makeEvalOpInstance :: String -> Name -> [(String, Int, Name)] -> Q [Dec]
-makeEvalOpInstance groupName ctxt ops = do
+makeEvalOpInstance :: String -> Name -> Type -> [(String, Int, Name)] -> Q [Dec]
+makeEvalOpInstance groupName varA ctxt ops = do
     let gName = mkName groupName
-    varA <- newName "a"
-    let typeAlias = TySynInstD ''CanEval
-            $ TySynEqn [ConT gName, VarT varA] (AppT (ConT ctxt) (VarT varA))
+    let typeAlias = TySynInstD ''CanEval (TySynEqn [ConT gName, VarT varA] ctxt)
     funClauses <- forM ops $ \(nm, cnt, impl) -> do
         vars <- replicateM cnt (newName "x")
         return $ Clause [ConP (mkName $ head groupName : nm) (VarP <$> vars)]
@@ -85,17 +84,52 @@ makeEvalOpInstance groupName ctxt ops = do
     return $ pure $ InstanceD Nothing [] (ConT ''EvalOp `AppT` ConT gName)
         [typeAlias, FunD 'evalOp funClauses]
 
-makeOp :: String -> Name -> [(String, Int, Name)] -> Q [Dec]
-makeOp groupName ctxt ops = do
-    let getName (nm, _, _) = nm
-    when (null groupName || any (null . getName) ops) $
-        reportError "Operator should not be empty."
-    unless (all (isUpper . head) (groupName : map getName ops)) $
-        reportError "Names should begin with uppercase letters."
-    let ops2 = map (\(nm, cnt, _) -> (nm, cnt)) ops
+fetchConstraintFor :: Name -> Name -> Q (Cxt, Int)
+fetchConstraintFor var name = reify name >>= \case
+    VarI _ typ _ -> process [] [] typ
+    ClassOpI _ typ _ -> process [] [] typ
+    _ -> fail "Invalid opImpl: Not supported."
+    where
+    viewVarBndr :: TyVarBndr -> Maybe Name
+    viewVarBndr (PlainTV v) = Just v
+    viewVarBndr (KindedTV v StarT) = Just v
+    viewVarBndr _ = Nothing
+    process :: [Name] -> Cxt -> Type -> Q (Cxt, Int)
+    process vars ctxt (ForallT [viewVarBndr -> Just v] newCtxt typ)
+        = process (v:vars) (newCtxt ++ ctxt) typ
+    process vars ctxt typ = case vars of
+        (v:vs) | all (v ==) vs -> processSimple v ctxt 0 typ
+        _ -> fail "Only 1 variable should be used."
+    processSimple :: Name -> Cxt -> Int -> Type -> Q (Cxt, Int)
+    processSimple v ctxt cnt (MkArrow (VarT x) typ)
+        | x == v = processSimple v ctxt (succ cnt) typ
+    processSimple v ctxt cnt (VarT x)
+        | x == v = return (replaceVar v ctxt, cnt)
+    processSimple _ _ _ _ = fail "Only type a^n -> a is allowed."
+    replaceVar :: Name -> Cxt -> Cxt
+    replaceVar v = map replaceOnce where
+        replaceOnce :: Type -> Type
+        replaceOnce (AppT f x) = AppT (replaceOnce f) (replaceOnce x)
+        replaceOnce (SigT x k) = SigT (replaceOnce x) k
+        replaceOnce (ParensT x) = ParensT (replaceOnce x)
+        replaceOnce (VarT x) | x == v = VarT var
+        replaceOnce t = t
+
+makeOp :: String -> [(String, Name)] -> Q [Dec]
+makeOp groupName ops = do
+    when (null groupName || any (null . fst) ops) $
+        fail "Operator should not be empty."
+    unless (all (isUpper . head) (groupName : map fst ops)) $
+        fail "Names should begin with uppercase letters."
+    let (opNames, opImpls) = unzip ops
+    varA <- newName "a"
+    (opCxt, opCnt) <- unzip <$> mapM (fetchConstraintFor varA) opImpls
+    let ops2 = zip opNames opCnt
+    let ctxtTotal = Set.toList $ Set.fromList $ concat opCxt
+    let ctxt = foldl AppT (TupleT $ length ctxtTotal) ctxtTotal
     groupDecl <- makeOpGroupDecl groupName ops2
     synonymSig <- makeSynonymSig groupName ops2
     opSynonym <- makeOpSynonym groupName ops2
     exprSynonym <- makeExprSynonym ops2
-    evalOpInstance <- makeEvalOpInstance groupName ctxt ops
+    evalOpInstance <- makeEvalOpInstance groupName varA ctxt (zip3 opNames opCnt opImpls)
     return $ groupDecl ++ synonymSig ++ opSynonym ++ exprSynonym ++ evalOpInstance
