@@ -9,7 +9,7 @@ import GHC.Exts (Constraint)
 
 data Expression op a
     = Atom a
-    | Op {-# UNPACK #-} !(op (Expression op a))
+    | Op (op (Expression op a))
     deriving stock Functor
 
 deriving stock instance (Show a, forall b . Show b => Show (op b)) => Show (Expression op a)

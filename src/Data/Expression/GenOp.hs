@@ -11,8 +11,8 @@ import Data.Expression.Basic
 
 data family GenOp (ops :: [* -> *]) (a :: *)
 data instance GenOp '[] a = NullOp deriving stock (Show, Eq, Functor)
-data instance GenOp (x ': xs) a = HeadOp {-# UNPACK #-} !(x a)
-                                | TailOps {-# UNPACK #-} !(GenOp xs a)
+data instance GenOp (x ': xs) a = HeadOp (x a)
+                                | TailOps (GenOp xs a)
 
 deriving stock instance (Eq (x a), Eq (GenOp xs a)) => Eq (GenOp (x ': xs) a)
 deriving stock instance (Show (x a), Show (GenOp xs a)) => Show (GenOp (x ': xs) a)
