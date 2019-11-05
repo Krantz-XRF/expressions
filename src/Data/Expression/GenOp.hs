@@ -1,5 +1,6 @@
 module Data.Expression.GenOp
-    ( GenOp(..)
+    ( GenOp
+    , GenOpI(..)
     , HasOp(..)
     , HasOps
     ) where
@@ -8,24 +9,33 @@ import GHC.Exts (Constraint)
 
 import Control.Applicative
 import Data.Expression.Basic
+import Data.Expression.Utility
 
 -- | Generalized Operators:
--- @GenOp [<ops>...]@ is sum type of @<ops>...@.
-data family GenOp (ops :: [* -> *]) (a :: *)
-data instance GenOp '[] a = NullOp deriving stock (Show, Eq, Functor)
-data instance GenOp (x ': xs) a = HeadOp (x a)
-                                | TailOps (GenOp xs a)
+-- @GenOp [ops...]@ is sum type of @ops...@.
+type GenOp (ops :: [* -> *]) = GenOpI (MkNonEmpty ops)
 
-deriving stock instance (Eq (x a), Eq (GenOp xs a)) => Eq (GenOp (x ': xs) a)
-deriving stock instance (Show (x a), Show (GenOp xs a)) => Show (GenOp (x ': xs) a)
-deriving stock instance (Functor x, Functor (GenOp xs)) => Functor (GenOp (x ': xs))
+-- | Implementation for generalized operators.
+data family GenOpI (ops :: NonEmpty (* -> *)) (a :: *)
+data instance GenOpI ('Last x) a = TailTipOp (x a) deriving stock (Show, Eq, Functor)
+data instance GenOpI ('Cons x xs) a
+    = HeadOp (x a)
+    | TailOps (GenOpI xs a)
 
-instance EvalOp (GenOp '[]) where
-    type CanEval (GenOp '[]) a = Num a
-    evalOp _ = 0
+deriving stock instance (Eq (x a), Eq (GenOpI xs a)) => Eq (GenOpI ('Cons x xs) a)
+deriving stock instance (Show (x a), Show (GenOpI xs a)) => Show (GenOpI ('Cons x xs) a)
+deriving stock instance (Functor x, Functor (GenOpI xs)) => Functor (GenOpI ('Cons x xs))
 
-instance EvalOp (GenOp (x ': xs)) where
-    type CanEval (GenOp (x ': xs)) a = (EvalExpr x a, EvalExpr (GenOp xs) a)
+-- | Evaluation of 'GenOp' @[x]@
+-- is propagated to the underlying operator @x@.
+instance EvalOp x => EvalOp (GenOpI ('Last x)) where
+    type CanEval (GenOpI ('Last x)) a = CanEval x a
+    evalOp (TailTipOp e) = evalOp e
+
+-- | Evaluation of 'GenOp' @x ': xs@
+-- is propagated to the underlying operators @x@ or @xs@ accordingly.
+instance EvalOp (GenOpI ('Cons x xs)) where
+    type CanEval (GenOpI ('Cons x xs)) a = (EvalExpr x a, EvalExpr (GenOpI xs) a)
     evalOp (HeadOp m)   = evalOp m
     evalOp (TailOps ms) = evalOp ms
 
@@ -41,31 +51,28 @@ type family HasOps (ops :: [* -> *]) (genOp :: * -> *) :: Constraint where
     HasOps (x ': xs) genOp = (HasOp x genOp, HasOps xs genOp)
 
 -- | a is in (a : _)
-instance {-# OVERLAPPING #-} HasOp a (GenOp (a ': xs)) where
+instance {-# OVERLAPPING #-} HasOp a (GenOpI ('Cons a xs)) where
     liftOp = HeadOp
     checkOp (HeadOp m) = Just m
     checkOp _ = Nothing
 
 -- | a is in xs => a is in (x : xs)
-instance {-# OVERLAPPABLE #-} HasOp a (GenOp xs) => HasOp a (GenOp (x ': xs)) where
+instance {-# OVERLAPPABLE #-} HasOp a (GenOpI xs)
+    => HasOp a (GenOpI ('Cons x xs)) where
     liftOp = TailOps . liftOp
     checkOp (TailOps ms) = checkOp ms
     checkOp _ = Nothing
 
--- | [] subsets []
-instance {-# OVERLAPPING #-} HasOp (GenOp '[]) (GenOp '[]) where
-    liftOp  = const NullOp
-    checkOp = const Nothing
-
--- | [] subsets (_ : _)
-instance {-# OVERLAPPING #-} HasOp (GenOp '[]) (GenOp (x ': xs)) where
-    liftOp  = const (liftOp NullOp)
-    checkOp = const Nothing
+-- | x is in xs => [x] subsets xs
+instance {-# OVERLAPPING #-} HasOp x (GenOpI xs)
+    => HasOp (GenOpI ('Last x)) (GenOpI xs) where
+    liftOp (TailTipOp m) = liftOp m
+    checkOp g = TailTipOp <$> checkOp @x g
 
 -- | x is in g, xs is in g => (x : xs) is in g
-instance {-# OVERLAPPING #-} (HasOp x genOp, HasOp (GenOp xs) genOp)
-    => HasOp (GenOp (x ': xs)) genOp where
+instance (HasOp x genOp, HasOp (GenOpI xs) genOp)
+    => HasOp (GenOpI ('Cons x xs)) genOp where
     liftOp (HeadOp m)   = liftOp m
     liftOp (TailOps ms) = liftOp ms
     checkOp g = liftOp <$> checkOp @x g
-              <|> TailOps <$> checkOp @(GenOp xs) g
+              <|> TailOps <$> checkOp @(GenOpI xs) g
