@@ -4,6 +4,7 @@ module Data.Expression.GenOp
     , GenExpression
     , HasOp(..)
     , HasOps
+    , liftExpression
     ) where
 
 import GHC.Exts (Constraint)
@@ -49,13 +50,22 @@ class HasOp (op :: * -> *) (genOp :: * -> *) where
     checkOp :: genOp a -> Maybe (op a)
     {-# MINIMAL liftOp, checkOp #-}
 
+liftExpression :: (Functor a, HasOp a b) => Expression a v -> Expression b v
+liftExpression (Atom x) = Atom x
+liftExpression (Op m) = Op $ liftOp $ fmap liftExpression m
+
 -- | Shortcut constraint for 'HasOp'.
 type family HasOps (ops :: [* -> *]) (genOp :: * -> *) :: Constraint where
     HasOps '[]       genOp = ()
     HasOps (x ': xs) genOp = (HasOp x genOp, HasOps xs genOp)
 
+-- | a is in [a]
+instance {-# OVERLAPPABLE #-} HasOp a (GenOpI ('Last a)) where
+    liftOp = TailTipOp
+    checkOp (TailTipOp m) = Just m
+
 -- | a is in (a : _)
-instance {-# OVERLAPPING #-} HasOp a (GenOpI ('Cons a xs)) where
+instance {-# OVERLAPS #-} HasOp a (GenOpI ('Cons a xs)) where
     liftOp = HeadOp
     checkOp (HeadOp m) = Just m
     checkOp _ = Nothing
@@ -67,15 +77,21 @@ instance {-# OVERLAPPABLE #-} HasOp a (GenOpI xs)
     checkOp (TailOps ms) = checkOp ms
     checkOp _ = Nothing
 
--- | x is in xs => [x] subsets xs
-instance {-# OVERLAPPING #-} HasOp x (GenOpI xs)
-    => HasOp (GenOpI ('Last x)) (GenOpI xs) where
+-- | x is in (y : ys) => [x] subsets (y : ys)
+instance {-# OVERLAPPING #-} HasOp x (GenOpI ('Cons y ys))
+    => HasOp (GenOpI ('Last x)) (GenOpI ('Cons y ys)) where
     liftOp (TailTipOp m) = liftOp m
     checkOp g = TailTipOp <$> checkOp @x g
 
--- | x is in g, xs is in g => (x : xs) is in g
-instance (HasOp x genOp, HasOp (GenOpI xs) genOp)
-    => HasOp (GenOpI ('Cons x xs)) genOp where
+-- | [x] subsets [x]
+instance {-# OVERLAPPING #-} HasOp (GenOpI ('Last x)) (GenOpI ('Last x)) where
+    liftOp  = id
+    checkOp = Just
+
+-- | x is in (y : ys), xs is in (y : ys) => (x : xs) subsets (y : ys)
+instance {-# OVERLAPPING #-}
+    (HasOp x (GenOpI ('Cons y ys)), HasOp (GenOpI xs) (GenOpI ('Cons y ys)))
+    => HasOp (GenOpI ('Cons x xs)) (GenOpI ('Cons y ys)) where
     liftOp (HeadOp m)   = liftOp m
     liftOp (TailOps ms) = liftOp ms
     checkOp g = liftOp <$> checkOp @x g
