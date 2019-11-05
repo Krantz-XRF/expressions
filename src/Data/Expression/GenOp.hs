@@ -50,6 +50,7 @@ class HasOp (op :: * -> *) (genOp :: * -> *) where
     checkOp :: genOp a -> Maybe (op a)
     {-# MINIMAL liftOp, checkOp #-}
 
+-- | Lift a whole expression with the help of 'HasOp'.
 liftExpression :: (Functor a, HasOp a b) => Expression a v -> Expression b v
 liftExpression (Atom x) = Atom x
 liftExpression (Op m) = Op $ liftOp $ fmap liftExpression m
