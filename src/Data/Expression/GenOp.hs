@@ -1,6 +1,7 @@
 module Data.Expression.GenOp
     ( GenOp
     , GenOpI(..)
+    , GenExpression
     , HasOp(..)
     , HasOps
     ) where
@@ -25,6 +26,9 @@ data instance GenOpI ('Cons x xs) a
 deriving stock instance (Eq (x a), Eq (GenOpI xs a)) => Eq (GenOpI ('Cons x xs) a)
 deriving stock instance (Show (x a), Show (GenOpI xs a)) => Show (GenOpI ('Cons x xs) a)
 deriving stock instance (Functor x, Functor (GenOpI xs)) => Functor (GenOpI ('Cons x xs))
+
+-- | Generalized Expressions with a 'GenOp'.
+type GenExpression (ops :: [* -> *]) = Expression (GenOp ops)
 
 -- | Evaluation of 'GenOp' @[x]@
 -- is propagated to the underlying operator @x@.
