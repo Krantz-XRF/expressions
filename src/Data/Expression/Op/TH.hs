@@ -70,7 +70,7 @@ makeSynonymSig groupName ops = do
 --
 -- > let: <gName> = <head groupName><ops:name>
 -- > pattern O<ops:name> x ... <ops:cnt>
--- >   <- (checkOp -> Just (<gName> x ... <ops:cnt>))
+-- >   <- (checkOp -> Right (<gName> x ... <ops:cnt>))
 -- >   where O<ops:name> x y = liftOp (<gName> x y)
 makeOpSynonym :: String -> [(String, Int)] -> Q [Dec]
 makeOpSynonym groupName ops = forM ops $ \(nm, cnt) -> do
@@ -81,7 +81,7 @@ makeOpSynonym groupName ops = forM ops $ \(nm, cnt) -> do
         (ExplBidir [Clause (VarP <$> vars)
             (NormalB $ VarE 'liftOp `AppE`
                 foldl AppE (ConE opGroupName) (map VarE vars)) []])
-        (ViewP (VarE 'checkOp) (ConP 'Just [ConP opGroupName (VarP <$> vars)]))
+        (ViewP (VarE 'checkOp) (ConP 'Right [ConP opGroupName (VarP <$> vars)]))
 
 -- $exprSynonyms
 -- Generalized Expression Synonyms (via 'HasOp'):
@@ -151,6 +151,7 @@ fetchConstraintFor var name = reify name >>= \case
         replaceOnce (VarT x) | x == v = VarT var
         replaceOnce t = t
 
+-- | Make operators from @groupName@ and (@opName@, @opImpl@) pairs.
 makeOp :: String -> [(String, Name)] -> Q [Dec]
 makeOp groupName ops = do
     when (null groupName || any (null . fst) ops) $
