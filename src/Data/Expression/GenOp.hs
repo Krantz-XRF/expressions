@@ -5,6 +5,7 @@ module Data.Expression.GenOp
     , HasOp(..)
     , HasOps
     , liftExpression
+    , replaceOp
     ) where
 
 import GHC.Exts (Constraint)
@@ -54,6 +55,15 @@ class HasOp (op :: * -> *) (genOp :: * -> *) where
 liftExpression :: (Functor a, HasOp a b) => Expression a v -> Expression b v
 liftExpression (Atom x) = Atom x
 liftExpression (Op m) = Op $ liftOp $ fmap liftExpression m
+
+-- | Replace all occurrences of a operator in the expression tree.
+replaceOp :: (Functor op, Functor genOp, HasOp op genOp)
+          => (op (Expression genOp a) -> Expression genOp a)
+          -> Expression genOp a
+          -> Expression genOp a
+replaceOp f (Op (checkOp -> Just m)) = f (replaceOp f <$> m)
+replaceOp f (Op m) = Op (replaceOp f <$> m)
+replaceOp _ a = a
 
 -- | Shortcut constraint for 'HasOp'.
 type family HasOps (ops :: [* -> *]) (genOp :: * -> *) :: Constraint where
