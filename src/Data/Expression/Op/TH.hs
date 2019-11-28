@@ -19,6 +19,8 @@ import Language.Haskell.TH
 import Data.Expression.Basic
 import Data.Expression.GenOp
 
+import Data.Functor.Identity
+
 pattern MkArrow :: Type -> Type -> Type
 pattern MkArrow t1 t2 = ArrowT `AppT` t1 `AppT` t2
 
@@ -97,22 +99,24 @@ makeExprSynonym ops = forM ops $ \(nm, cnt) -> do
         (ConP 'Op [ConP opSynName (VarP <$> vars)])
 
 -- $evalOpInstance
--- 'EvalOp' Instance:
+-- 'EvalOpM' Instance for 'Identity' monad:
 --
 -- > let: <gName> = <head groupName><ops:name>
--- > instance EvalOp <groupName> where
--- >   eval (<gName> x ... <ops:cnt>)
--- >     = <ops:impl> (eval x) ... <ops:cnt>
+-- > instance EvalOpM Identity <groupName> where
+-- >   evalOp (<gName> x ... <ops:cnt>)
+-- >     = return (<ops:impl> (eval x) ... <ops:cnt>)
 -- >   ... <length ops>
 makeEvalOpInstance :: String -> Name -> Type -> [(String, Int, Name)] -> Q [Dec]
 makeEvalOpInstance groupName varA ctxt ops = do
     let gName = mkName groupName
-    let typeAlias = TySynInstD ''CanEval (TySynEqn [ConT gName, VarT varA] ctxt)
+    let typeAlias = TySynInstD ''CanEvalM (TySynEqn [ConT ''Identity, ConT gName, VarT varA] ctxt)
     funClauses <- forM ops $ \(nm, cnt, impl) -> do
         vars <- replicateM cnt (newName "x")
         return $ Clause [ConP (mkName $ head groupName : nm) (VarP <$> vars)]
-            (NormalB $ foldl AppE (VarE impl) $ AppE (VarE 'eval) <$> VarE <$> vars) []
-    return $ pure $ InstanceD Nothing [] (ConT ''EvalOp `AppT` ConT gName)
+            (NormalB $ AppE (VarE 'return)
+                     $ foldl AppE (VarE impl)
+                     $ AppE (VarE 'eval) <$> VarE <$> vars) []
+    return $ pure $ InstanceD Nothing [] (ConT ''EvalOpM `AppT` ConT ''Identity `AppT` ConT gName)
         [typeAlias, FunD 'evalOp funClauses]
 
 fetchConstraintFor :: Name -> Name -> Q (Cxt, Int)
