@@ -1,13 +1,13 @@
 # Changelog for expressions
 
-The bullet points marked a :heavy_exclamation_mark: are interface-breaking changes. By 'interface-breaking', we mean some well-formed code may break after this change.
+The bullet points marked a :warning: are interface-breaking changes. By 'interface-breaking', we mean some well-formed code may break after this change.
 
 ## Unreleased changes
 
 - Introduced an extra `Monad` parameter in `EvalOp`
   - Rename `EvalOp` as `EvalOpM`
   - `EvalOp` re-introduced as an alias for `EvalOp Identity`
-- :heavy_exclamation_mark: Swapped the patterns `O<op>` and `<op>` in Template-Haskell generated code
+- :warning: Swapped the patterns `O<op>` and `<op>` in Template-Haskell generated code
   - `O<op>` was intended as a shortcut for `Op . <op>`
 - Relaxed the type signature for `<op>`
   - Take `Plus` as an example
