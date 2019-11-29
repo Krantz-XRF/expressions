@@ -64,8 +64,8 @@ makeSynonymSig groupName ops = do
             ForallT [KindedTV varA StarT, KindedTV varOp (StarT `MkArrow` StarT)]
                 [ConT ''HasOp `AppT` ConT (mkName groupName) `AppT` VarT varOp]
                 (foldr ($) result $ replicate cnt (MkArrow expr))
-    return $ map (uncurry $ synonymSig expr) ops
-           ++ map (uncurry $ synonymSig exprRaw . ('O' : )) ops
+    return $ map (uncurry $ synonymSig expr . ('O' : )) ops
+           ++ map (uncurry $ synonymSig exprRaw) ops
 
 -- $opSynonyms
 -- Generalized Operator Synonyms (via 'HasOp'):
@@ -76,7 +76,7 @@ makeSynonymSig groupName ops = do
 -- >   where O<ops:name> x y = liftOp (<gName> x y)
 makeOpSynonym :: String -> [(String, Int)] -> Q [Dec]
 makeOpSynonym groupName ops = forM ops $ \(nm, cnt) -> do
-    let opSynName = mkName ('O' : nm)
+    let opSynName = mkName nm
     let opGroupName = mkName (head groupName : nm)
     vars <- replicateM cnt (newName "x")
     return $ PatSynD opSynName (PrefixPatSyn vars)
@@ -92,8 +92,8 @@ makeOpSynonym groupName ops = forM ops $ \(nm, cnt) -> do
 -- >   = Op (O<ops:name> x ... <ops:cnt>)
 makeExprSynonym :: [(String, Int)] -> Q [Dec]
 makeExprSynonym ops = forM ops $ \(nm, cnt) -> do
-    let exprConName = mkName nm
-    let opSynName = mkName ('O' : nm)
+    let exprConName = mkName ('O' : nm)
+    let opSynName = mkName nm
     vars <- replicateM cnt (newName "x")
     return $ PatSynD exprConName (PrefixPatSyn vars) ImplBidir
         (ConP 'Op [ConP opSynName (VarP <$> vars)])
