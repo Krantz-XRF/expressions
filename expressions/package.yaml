@@ -71,3 +71,5 @@ tests:
     - -Wall
     dependencies:
     - expressions
+    - hspec
+    - hspec-expectations
