@@ -3,7 +3,6 @@ module Data.Expression.Op.TH (
       -- * Automatic Op Generating
       --
       -- $groupDecl
-      -- $synonymSigs
       -- $opSynonyms
       -- $exprSynonyms
       -- $evalOpInstance
@@ -41,62 +40,61 @@ makeOpGroupDecl groupName ops = do
             | (nm, cnt) <- ops, let nm' = mkName (head groupName : nm)]
         [DerivClause (Just StockStrategy) (ConT <$> [''Show, ''Eq, ''Functor])]
 
--- $synonymSigs
--- Pattern Synonym Signatures:
+-- $exprSynonyms
+-- Generalized Expression Synonyms (via 'HasOp'):
+--
+-- > let: <gName> = <head groupName><ops:name>
+-- > pattern <ops:name>
+-- >   :: HasOp <groupName> op => a -> ... <ops:cnt> -> op a
+-- > pattern <ops:name> x ... <ops:cnt>
+-- >   <- (checkOp -> Right (<gName> x ... <ops:cnt>))
+-- >   where <ops:name> x y = liftOp (<gName> x y)
+makeExprSynonym :: String -> [(String, Int)] -> Q [Dec]
+makeExprSynonym groupName ops = fmap concat $ forM ops $ \(nm, cnt) -> do
+    varOp <- newName "op"
+    varA <- newName "a"
+    let opSynName = mkName nm
+    let opGroupName = mkName (head groupName : nm)
+    let result = VarT varOp `AppT` VarT varA
+    vars <- replicateM cnt (newName "x")
+    return
+        [ PatSynSigD opSynName $
+            ForallT [KindedTV varA StarT, KindedTV varOp (StarT `MkArrow` StarT)]
+                [ConT ''HasOp `AppT` ConT (mkName groupName) `AppT` VarT varOp]
+                (foldr ($) result $ replicate cnt (MkArrow (VarT varA)))
+        , PatSynD opSynName (PrefixPatSyn vars)
+            (ExplBidir [Clause (VarP <$> vars)
+                (NormalB $ VarE 'liftOp `AppE`
+                    foldl AppE (ConE opGroupName) (map VarE vars)) []])
+            (ViewP (VarE 'checkOp) (ConP 'Right [ConP opGroupName (VarP <$> vars)]))
+        ]
+
+-- $opSynonyms
+-- Generalized Operator Synonyms (via 'HasOp'):
 --
 -- > pattern O<ops:name>
 -- >   :: HasOp <groupName> op
 -- >   => Expression op a
 -- >   -> ... <ops:cnt>
 -- >   -> Expression op a
--- > pattern <ops:name>
--- >   :: HasOp <groupName> op
--- >   => Expression op a
--- >   -> ... <ops:cnt>
--- >   -> op (Expression op a)
-makeSynonymSig :: String -> [(String, Int)] -> Q [Dec]
-makeSynonymSig groupName ops = do
+-- > pattern O<ops:name> x ... <ops:cnt>
+-- >   = Op (<ops:name> x ... <ops:cnt>)
+makeOpSynonym :: String -> [(String, Int)] -> Q [Dec]
+makeOpSynonym groupName ops = fmap concat $ forM ops $ \(nm, cnt) -> do
     varOp <- newName "op"
     varA <- newName "a"
-    let expr = ConT ''Expression `AppT` VarT varOp `AppT` VarT varA
-        exprRaw = VarT varOp `AppT` expr
-        synonymSig result name cnt = PatSynSigD (mkName name) $
-            ForallT [KindedTV varA StarT, KindedTV varOp (StarT `MkArrow` StarT)]
-                [ConT ''HasOp `AppT` ConT (mkName groupName) `AppT` VarT varOp]
-                (foldr ($) result $ replicate cnt (MkArrow expr))
-    return $ map (uncurry $ synonymSig expr . ('O' : )) ops
-           ++ map (uncurry $ synonymSig exprRaw) ops
-
--- $opSynonyms
--- Generalized Operator Synonyms (via 'HasOp'):
---
--- > let: <gName> = <head groupName><ops:name>
--- > pattern O<ops:name> x ... <ops:cnt>
--- >   <- (checkOp -> Right (<gName> x ... <ops:cnt>))
--- >   where O<ops:name> x y = liftOp (<gName> x y)
-makeOpSynonym :: String -> [(String, Int)] -> Q [Dec]
-makeOpSynonym groupName ops = forM ops $ \(nm, cnt) -> do
-    let opSynName = mkName nm
-    let opGroupName = mkName (head groupName : nm)
-    vars <- replicateM cnt (newName "x")
-    return $ PatSynD opSynName (PrefixPatSyn vars)
-        (ExplBidir [Clause (VarP <$> vars)
-            (NormalB $ VarE 'liftOp `AppE`
-                foldl AppE (ConE opGroupName) (map VarE vars)) []])
-        (ViewP (VarE 'checkOp) (ConP 'Right [ConP opGroupName (VarP <$> vars)]))
-
--- $exprSynonyms
--- Generalized Expression Synonyms (via 'HasOp'):
---
--- > pattern <ops:name> x ... <ops:cnt>
--- >   = Op (O<ops:name> x ... <ops:cnt>)
-makeExprSynonym :: [(String, Int)] -> Q [Dec]
-makeExprSynonym ops = forM ops $ \(nm, cnt) -> do
     let exprConName = mkName ('O' : nm)
     let opSynName = mkName nm
+    let expr = ConT ''Expression `AppT` VarT varOp `AppT` VarT varA
     vars <- replicateM cnt (newName "x")
-    return $ PatSynD exprConName (PrefixPatSyn vars) ImplBidir
-        (ConP 'Op [ConP opSynName (VarP <$> vars)])
+    return 
+        [ PatSynSigD exprConName $
+            ForallT [KindedTV varA StarT, KindedTV varOp (StarT `MkArrow` StarT)]
+                [ConT ''HasOp `AppT` ConT (mkName groupName) `AppT` VarT varOp]
+                (foldr ($) expr $ replicate cnt (MkArrow expr))
+        , PatSynD exprConName (PrefixPatSyn vars) ImplBidir
+            (ConP 'Op [ConP opSynName (VarP <$> vars)])
+        ]
 
 -- $evalOpInstance
 -- 'EvalOpM' Instance for 'Identity' monad:
@@ -169,8 +167,7 @@ makeOp groupName ops = do
     let ctxtTotal = Set.toList $ Set.fromList $ concat opCxt
     let ctxt = foldl AppT (TupleT $ length ctxtTotal) ctxtTotal
     groupDecl <- makeOpGroupDecl groupName opNamesCnts
-    synonymSig <- makeSynonymSig groupName opNamesCnts
     opSynonym <- makeOpSynonym groupName opNamesCnts
-    exprSynonym <- makeExprSynonym opNamesCnts
+    exprSynonym <- makeExprSynonym groupName opNamesCnts
     evalOpInstance <- makeEvalOpInstance groupName varA ctxt (zip3 opNames opCnt opImpls)
-    return $ groupDecl ++ synonymSig ++ opSynonym ++ exprSynonym ++ evalOpInstance
+    return $ groupDecl ++ opSynonym ++ exprSynonym ++ evalOpInstance
