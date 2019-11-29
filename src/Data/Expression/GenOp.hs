@@ -11,7 +11,6 @@ module Data.Expression.GenOp
     , replaceOp
     ) where
 
-import Data.Functor.Identity
 import GHC.Exts (Constraint)
 
 import GHC.Exts (Proxy#, proxy#)
@@ -48,14 +47,14 @@ type GenExpression (ops :: [* -> *]) = Expression (GenOp ops)
 
 -- | Evaluation of 'GenOp' @[x]@
 -- is propagated to the underlying operator @x@.
-instance EvalOpM Identity (GenOp '[]) where
-    type CanEvalM Identity (GenOp '[]) a = ()
+instance Monad m => EvalOpM m (GenOp '[]) where
+    type CanEvalM m (GenOp '[]) a = ()
     evalOp (IdOp x) = evalM x
 
 -- | Evaluation of 'GenOp' @x ': xs@
 -- is propagated to the underlying operators @x@ or @xs@ accordingly.
-instance EvalOpM Identity (GenOp (x ': xs)) where
-    type CanEvalM Identity (GenOp (x ': xs)) a = (EvalExpr x a, EvalExpr (GenOp xs) a)
+instance Monad m => EvalOpM m (GenOp (x ': xs)) where
+    type CanEvalM m (GenOp (x ': xs)) a = (EvalExprM m x a, EvalExprM m (GenOp xs) a)
     evalOp (HeadOp m)   = evalOp m
     evalOp (TailOps ms) = evalOp ms
 
