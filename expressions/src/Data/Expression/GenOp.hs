@@ -38,9 +38,10 @@ type family RemoveList (op :: * -> *) (ops :: [* -> *]) :: [* -> *] where
     RemoveList (GenOp xs) ys = ListDiff ys xs
     RemoveList x ys = Remove ys (Found ys x)
 
-type family IsGenOp (op :: * -> *) :: Bool where
-    IsGenOp (GenOp _) = 'True
-    IsGenOp _         = 'False
+type family GetOpRel (op :: * -> *) (genOp :: * -> *) :: OpRelation where
+    GetOpRel (GenOp _) (GenOp _) = 'Subset
+    GetOpRel _         (GenOp _) = 'Elem
+    GetOpRel _         _         = 'Same
 
 -- | Generalized Expressions with a 'GenOp'.
 type GenExpression (ops :: [* -> *]) = Expression (GenOp ops)
@@ -58,17 +59,20 @@ instance Monad m => EvalOpM m (GenOp (x ': xs)) where
     evalOp (HeadOp m)   = evalOp m
     evalOp (TailOps ms) = evalOp ms
 
-class FoundOp (subset :: Bool) (n :: Nat) (op :: * -> *) (genOp :: * -> *) where
-    liftOpRaw :: Proxy# subset -> Proxy# n -> op a -> genOp a
-    checkOpRaw :: Proxy# subset -> Proxy# n -> genOp a -> Either (RemoveOp op genOp a) (op a)
+data OpRelation = Elem | Subset | Same
+
+class FoundOp (rel :: OpRelation) (n :: Nat) (op :: * -> *) (genOp :: * -> *) where
+    liftOpRaw :: Proxy# rel -> Proxy# n -> op a -> genOp a
+    checkOpRaw :: Proxy# rel -> Proxy# n -> genOp a -> Either (RemoveOp op genOp a) (op a)
     {-# MINIMAL liftOpRaw, checkOpRaw #-}
 
 type family IndexOrLength (genOp :: * -> *) (op :: * -> *) :: Nat where
     IndexOrLength (GenOp _) (GenOp xs) = Length xs
     IndexOrLength (GenOp xs) x = Found xs x
+    IndexOrLength _ _ = 'Z
 
 type PIndexOrLength op genOp = Proxy# (IndexOrLength genOp op)
-type ProxyIsGenOp op = Proxy# (IsGenOp op)
+type POpRel op genOp = Proxy# (GetOpRel op genOp)
 
 -- | Lift a whole expression with the help of 'HasOp'.
 liftExpression :: forall a b v . (Functor a, HasOp a b) => Expression a v -> Expression b v
@@ -87,16 +91,16 @@ replaceOp f (Op m) = case checkOp m of
 replaceOp _ (Atom a) = Atom a
 
 -- | Indicate that @genOp@ includes operator @op@.
-type HasOp op genOp = FoundOp (IsGenOp op) (IndexOrLength genOp op) op genOp
+type HasOp op genOp = FoundOp (GetOpRel op genOp) (IndexOrLength genOp op) op genOp
 
 -- | Lift an operator @op@ to @genOp@, where 'HasOp' @op@ @genOp@ holds.
 liftOp :: forall op genOp a . HasOp op genOp => op a -> genOp a
-liftOp = liftOpRaw (proxy# :: ProxyIsGenOp op) (proxy# :: PIndexOrLength op genOp)
+liftOp = liftOpRaw (proxy# :: POpRel op genOp) (proxy# :: PIndexOrLength op genOp)
 
 -- | Checks whether a generalized operator @genOp@ is a @op@,
 -- where 'HasOp' @op@ @genOp@ holds.
 checkOp :: forall op genOp a . HasOp op genOp => genOp a -> Either (RemoveOp op genOp a) (op a)
-checkOp = checkOpRaw (proxy# :: ProxyIsGenOp op) (proxy# :: PIndexOrLength op genOp)
+checkOp = checkOpRaw (proxy# :: POpRel op genOp) (proxy# :: PIndexOrLength op genOp)
 
 -- | Shortcut constraint for 'HasOp'.
 type family HasOps (ops :: [* -> *]) (genOp :: * -> *) :: Constraint where
@@ -105,7 +109,7 @@ type family HasOps (ops :: [* -> *]) (genOp :: * -> *) :: Constraint where
 
 -- a is in (a : _)
 instance RemoveOp a (GenOp (a : xs)) ~ GenOp xs
-    => FoundOp 'False 'Z a (GenOp (a ': xs)) where
+    => FoundOp 'Elem 'Z a (GenOp (a ': xs)) where
     liftOpRaw _ _ = HeadOp
     checkOpRaw _ _ (HeadOp m) = Right m
     checkOpRaw _ _ (TailOps ms) = Left ms
@@ -113,8 +117,8 @@ instance RemoveOp a (GenOp (a : xs)) ~ GenOp xs
 -- a is in xs => a is in (x : xs)
 instance
     ( RemoveList a (x : xs) ~ (x : RemoveList a xs)
-    , FoundOp 'False n a (GenOp xs))
-    => FoundOp 'False ('S n) a (GenOp (x ': xs)) where
+    , FoundOp 'Elem n a (GenOp xs))
+    => FoundOp 'Elem ('S n) a (GenOp (x ': xs)) where
     liftOpRaw p _ = TailOps . liftOpRaw p (proxy# :: Proxy# n)
     checkOpRaw p _ (TailOps ms) = case checkOpRaw p (proxy# :: Proxy# n) ms of
         Left l -> Left (TailOps l)
@@ -122,13 +126,13 @@ instance
     checkOpRaw _ _ (HeadOp m) = Left (HeadOp m)
 
 -- [] subsets []
-instance FoundOp 'True 'Z (GenOp '[]) (GenOp '[]) where
+instance FoundOp 'Subset 'Z (GenOp '[]) (GenOp '[]) where
     liftOpRaw  _ _ = id
     checkOpRaw _ _ = Right
 
 -- [] subsets (_ : _)
-instance FoundOp 'True 'Z (GenOp '[]) (GenOp xs)
-    => FoundOp 'True 'Z (GenOp '[]) (GenOp (x ': xs)) where
+instance FoundOp 'Subset 'Z (GenOp '[]) (GenOp xs)
+    => FoundOp 'Subset 'Z (GenOp '[]) (GenOp (x ': xs)) where
     liftOpRaw pt pz = TailOps . liftOpRaw pt pz
     checkOpRaw pt pz (TailOps m) = case checkOpRaw pt pz m of
         Left l -> Left (TailOps l)
@@ -140,9 +144,9 @@ instance
     ( ListDiff (RemoveList x (y : ys)) xs
       ~ ListDiff (Remove (y : ys) (Found (y : ys) x)) xs
     , HasOp x (GenOp (y ': ys))
-    , FoundOp 'True n (GenOp xs) (GenOp (y ': ys))
-    , FoundOp 'True n (GenOp xs) (RemoveOp x (GenOp (y ': ys))))
-    => FoundOp 'True ('S n) (GenOp (x ': xs)) (GenOp (y ': ys)) where
+    , FoundOp 'Subset n (GenOp xs) (GenOp (y ': ys))
+    , FoundOp 'Subset n (GenOp xs) (RemoveOp x (GenOp (y ': ys))))
+    => FoundOp 'Subset ('S n) (GenOp (x ': xs)) (GenOp (y ': ys)) where
     liftOpRaw _ _ (HeadOp m)   = liftOp m
     liftOpRaw pt _ (TailOps ms) = liftOpRaw pt (proxy# :: Proxy# n) ms
     checkOpRaw pt _ g = case checkOp g of
@@ -150,3 +154,8 @@ instance
         Left l -> case checkOpRaw pt (proxy# :: Proxy# n) l of
             Right r -> Right (TailOps r)
             Left l' -> Left l'
+
+-- a is a
+instance FoundOp 'Same 'Z a a where
+    liftOpRaw _ _ = id
+    checkOpRaw _ _ = Right
